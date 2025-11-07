@@ -2768,9 +2768,11 @@ async function startServer() {
     console.log('✅ Admin routes registered');
     console.log('✅ Profile routes registered (with avatar support)');
     
-    app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      const actualPort = server.address().port;
       console.log('🚀 Production Authentication Server เริ่มทำงานแล้ว');
-      console.log(`📡 Server listening on 0.0.0.0:${PORT}`);
+      console.log(`📡 Server listening on 0.0.0.0:${actualPort}`);
+      console.log(`🔧 PORT env: ${process.env.PORT || 'not set'}`);
       console.log(`🗄️ Database: ${isDevelopment ? 'SQLite (Development)' : 'MySQL (Production)'}`);
       console.log('🔒 พร้อมรับคำขอ Authentication');
       console.log('==================================================');
