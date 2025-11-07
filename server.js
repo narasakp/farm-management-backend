@@ -88,9 +88,20 @@ async function initDatabase() {
     // Use SQLite for development/testing
     const sqlite3 = require('sqlite3').verbose();
     const { open } = require('sqlite');
+    const fs = require('fs');
+    const path = require('path');
+    
+    const dbPath = './farm_auth.db';
+    const seedDbPath = './farm_auth.seed.db';
+    
+    // Copy seed database if main database doesn't exist
+    if (!fs.existsSync(dbPath) && fs.existsSync(seedDbPath)) {
+      fs.copyFileSync(seedDbPath, dbPath);
+      console.log('✅ Copied seed database to farm_auth.db');
+    }
     
     db = await open({
-      filename: './farm_auth.db',  // ✅ เรียกจาก backend directory ใช้ relative path
+      filename: dbPath,
       driver: sqlite3.Database
     });
     
