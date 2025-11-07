@@ -400,6 +400,16 @@ async function logAuthEvent(userId, username, action, req) {
 
 // Routes
 
+// Health check endpoint for Railway
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Farm Management Authentication API',
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
 // Import RBAC routes
 const rbacRoutes = require('./routes/rbac');
 const farmsRoutes = require('./routes/farms');
@@ -2760,7 +2770,7 @@ async function startServer() {
     
     app.listen(PORT, '0.0.0.0', () => {
       console.log('🚀 Production Authentication Server เริ่มทำงานแล้ว');
-      console.log(`📡 URL: http://localhost:${PORT}`);
+      console.log(`📡 Server listening on 0.0.0.0:${PORT}`);
       console.log(`🗄️ Database: ${isDevelopment ? 'SQLite (Development)' : 'MySQL (Production)'}`);
       console.log('🔒 พร้อมรับคำขอ Authentication');
       console.log('==================================================');
