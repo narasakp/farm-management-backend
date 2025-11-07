@@ -13,7 +13,8 @@ const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+// Railway provides PORT via environment variable
+const PORT = process.env.PORT || 8080;
 
 // ==================== BRUTE FORCE PROTECTION ====================
 // In-memory store for IP-based rate limiting
