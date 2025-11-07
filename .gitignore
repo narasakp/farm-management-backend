@@ -1,0 +1,10 @@
+﻿node_modules/
+*.log
+.env
+.DS_Store
+farm_auth.db
+farm_auth.db-shm
+farm_auth.db-wal
+uploads/
+*.bat
+*.ps1
