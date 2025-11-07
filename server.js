@@ -50,7 +50,9 @@ app.use(cors({
       'http://127.0.0.1:8100',
       'http://localhost:3000',
       'https://manifestative-alva-blindly.ngrok-free.dev', // ngrok HTTPS tunnel
-      'https://gentle-tanuki-d4ece0.netlify.app' // Netlify production
+      'https://gentle-tanuki-d4ece0.netlify.app', // Netlify production
+      'https://naihoi.com', // Custom domain production
+      'https://www.naihoi.com' // Custom domain www
     ];
     
     if (allowedOrigins.includes(origin)) {
