@@ -1042,19 +1042,19 @@ app.post('/api/auth/facebook-login', async (req, res) => {
       console.log('🆕 Creating new Facebook OAuth user:', userEmail);
       const username = name ? name.replace(/\s/g, '_').toLowerCase() + '_fb' : `fb_${user_id}`;
       const displayName = name || username;
-      
       const insertQuery = isDevelopment
-        ? `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-        : `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+        ? `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+        : `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
       
-      // Use dummy password hash for OAuth users
+      // Use dummy password hash and salt for OAuth users
+      const dummySalt = crypto.randomBytes(16).toString('hex');
       const dummyHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
       
       if (isDevelopment) {
-        const result = await db.run(insertQuery, [username, userEmail, displayName, 'user', photo_url, 'facebook', user_id, dummyHash]);
+        const result = await db.run(insertQuery, [username, userEmail, displayName, 'user', photo_url, 'facebook', user_id, dummyHash, dummySalt]);
         user = await db.get(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
       } else {
-        const [result] = await db.execute(insertQuery, [username, userEmail, displayName, 'user', photo_url, 'facebook', user_id, dummyHash]);
+        const [result] = await db.execute(insertQuery, [username, userEmail, displayName, 'user', photo_url, 'facebook', user_id, dummyHash, dummySalt]);
         const [rows] = await db.execute(`SELECT * FROM users WHERE id = ?`, [result.insertId]);
         user = rows[0];
       }
