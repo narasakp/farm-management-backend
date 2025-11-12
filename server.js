@@ -415,13 +415,29 @@ async function logAuthEvent(userId, username, action, req) {
 
 // Routes
 
+// Server start time for uptime calculation
+const serverStartTime = Date.now();
+
 // Health check endpoint for Railway
 app.get('/', (req, res) => {
+  const uptime = Math.floor((Date.now() - serverStartTime) / 1000); // in seconds
+  const uptimeMinutes = Math.floor(uptime / 60);
+  const uptimeHours = Math.floor(uptimeMinutes / 60);
+  
   res.json({
     message: 'Farm Management Authentication API',
     status: 'running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    database: isDevelopment ? 'SQLite' : 'MySQL',
+    uptime: {
+      seconds: uptime,
+      minutes: uptimeMinutes,
+      hours: uptimeHours,
+      formatted: `${uptimeHours}h ${uptimeMinutes % 60}m ${uptime % 60}s`
+    },
+    version: '1.0.0',
+    healthy: true
   });
 });
 
