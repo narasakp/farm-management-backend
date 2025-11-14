@@ -1,8 +1,8 @@
-// Production Authentication Server with MySQL Database
+// Production Authentication Server with PostgreSQL Database
 // Persistent data storage for production use
 
 const express = require('express');
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
@@ -290,15 +290,149 @@ async function initDatabase() {
       console.log('⚠️ Votes migration skipped (table may not exist)');
     }
   } else {
-    // Use MySQL for production
-    db = await mysql.createConnection({
-      host: process.env.DB_HOST || 'localhost',
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'farm_management_db',
-      port: process.env.DB_PORT || 3306
+    // Use PostgreSQL for production
+    const pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DATABASE_URL?.includes('localhost') ? false : {
+        rejectUnauthorized: false
+      }
     });
-    console.log('🗄️ MySQL database connected for production');
+    
+    db = {
+      query: async (text, params) => {
+        const result = await pool.query(text, params);
+        return result.rows;
+      },
+      execute: async (text, params) => {
+        const result = await pool.query(text, params);
+        return [result.rows, result.fields];
+      },
+      run: async (text, params) => {
+        return await pool.query(text, params);
+      },
+      get: async (text, params) => {
+        const result = await pool.query(text, params);
+        return result.rows[0];
+      },
+      all: async (text, params) => {
+        const result = await pool.query(text, params);
+        return result.rows;
+      },
+      exec: async (text) => {
+        return await pool.query(text);
+      }
+    };
+    
+    // Create tables for PostgreSQL
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        salt TEXT NOT NULL,
+        role VARCHAR(50) NOT NULL DEFAULT 'farmer',
+        display_name TEXT NOT NULL,
+        avatar_url TEXT,
+        photo_url TEXT,
+        oauth_provider VARCHAR(50),
+        oauth_uid TEXT,
+        phone VARCHAR(20),
+        is_active BOOLEAN DEFAULT true,
+        is_verified BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_login_at TIMESTAMP,
+        failed_login_attempts INTEGER DEFAULT 0,
+        locked_until TIMESTAMP,
+        lock_count INTEGER DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL,
+        refresh_token_hash TEXT NOT NULL,
+        device_info TEXT,
+        ip_address VARCHAR(45),
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS auth_logs (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        username VARCHAR(255),
+        action VARCHAR(100) NOT NULL,
+        ip_address VARCHAR(45),
+        user_agent TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS farm_surveys (
+        id TEXT PRIMARY KEY,
+        farmer_id TEXT NOT NULL,
+        surveyor_id TEXT,
+        survey_date TIMESTAMP NOT NULL,
+        farmer_title VARCHAR(50) NOT NULL,
+        farmer_first_name VARCHAR(255) NOT NULL,
+        farmer_last_name VARCHAR(255) NOT NULL,
+        farmer_id_card VARCHAR(20) NOT NULL,
+        farmer_phone VARCHAR(20),
+        farmer_photo_base64 TEXT,
+        address_house_number TEXT NOT NULL,
+        address_village TEXT,
+        address_moo VARCHAR(10) NOT NULL,
+        address_tambon VARCHAR(100) NOT NULL,
+        address_amphoe VARCHAR(100) NOT NULL,
+        address_province VARCHAR(100) NOT NULL,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        farm_area DOUBLE PRECISION,
+        gps_address TEXT,
+        crop_area DOUBLE PRECISION,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS survey_livestock (
+        id SERIAL PRIMARY KEY,
+        survey_id TEXT NOT NULL REFERENCES farm_surveys(id) ON DELETE CASCADE,
+        livestock_type VARCHAR(100) NOT NULL,
+        age_group VARCHAR(50),
+        count INTEGER NOT NULL,
+        daily_milk_production DOUBLE PRECISION,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS production_records (
+        id SERIAL PRIMARY KEY,
+        livestock_id TEXT NOT NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        production_date DATE NOT NULL,
+        production_type VARCHAR(20) NOT NULL CHECK(production_type IN ('milk', 'egg', 'weight')),
+        quantity DOUBLE PRECISION NOT NULL,
+        unit VARCHAR(20) NOT NULL,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_production_livestock ON production_records(livestock_id);
+      CREATE INDEX IF NOT EXISTS idx_production_date ON production_records(production_date);
+      CREATE INDEX IF NOT EXISTS idx_production_type ON production_records(production_type);
+    `);
+    
+    console.log('🗄️ PostgreSQL database connected and initialized for production');
   }
 }
 
