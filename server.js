@@ -86,6 +86,11 @@ let otpStorage = new Map(); // Store OTP codes temporarily
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 async function initDatabase() {
+  console.log('🔍 Environment Check:');
+  console.log('   NODE_ENV =', process.env.NODE_ENV);
+  console.log('   DATABASE_URL =', process.env.DATABASE_URL ? 'SET' : 'NOT SET');
+  console.log('   isDevelopment =', isDevelopment);
+  
   if (isDevelopment) {
     // Use SQLite for development/testing
     const sqlite3 = require('sqlite3').verbose();
