@@ -310,28 +310,44 @@ async function initDatabase() {
       }
     });
     
+    // Helper: convert MySQL-style '?' placeholders to PostgreSQL-style '$1, $2, ...'
+    const convertPlaceholders = (text) => {
+      if (!text || !text.includes('?')) return text;
+      let index = 0;
+      return text.replace(/\?/g, () => {
+        index += 1;
+        return `$${index}`;
+      });
+    };
+    
     db = {
       query: async (text, params) => {
-        const result = await pool.query(text, params);
+        const sql = convertPlaceholders(text);
+        const result = await pool.query(sql, params);
         return result.rows;
       },
       execute: async (text, params) => {
-        const result = await pool.query(text, params);
+        const sql = convertPlaceholders(text);
+        const result = await pool.query(sql, params);
         return [result.rows, result.fields];
       },
       run: async (text, params) => {
-        return await pool.query(text, params);
+        const sql = convertPlaceholders(text);
+        return await pool.query(sql, params);
       },
       get: async (text, params) => {
-        const result = await pool.query(text, params);
+        const sql = convertPlaceholders(text);
+        const result = await pool.query(sql, params);
         return result.rows[0];
       },
       all: async (text, params) => {
-        const result = await pool.query(text, params);
+        const sql = convertPlaceholders(text);
+        const result = await pool.query(sql, params);
         return result.rows;
       },
       exec: async (text) => {
-        return await pool.query(text);
+        const sql = convertPlaceholders(text);
+        return await pool.query(sql);
       }
     };
     

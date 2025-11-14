@@ -3,74 +3,65 @@
  * Role-Based Access Control สำหรับตรวจสอบสิทธิ์การเข้าถึง
  */
 
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const { Pool } = require('pg');
 
-const DB_PATH = path.join(__dirname, '..', 'farm_auth.db');
+// Shared PostgreSQL pool (DATABASE_URL must be set in environment)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('localhost')
+    ? false
+    : { rejectUnauthorized: false }
+});
 
 /**
  * ตรวจสอบว่าผู้ใช้มี permission หรือไม่
  */
 async function checkPermission(userId, permissionCode) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(DB_PATH);
-    
-    db.get(`
-      SELECT p.permission_id, p.permission_code, p.resource, p.action
-      FROM permissions p
-      JOIN role_permissions rp ON p.permission_id = rp.permission_id
-      JOIN roles r ON rp.role_id = r.role_id
-      JOIN users u ON u.role = r.role_code
-      WHERE u.id = ? AND p.permission_code = ?
-    `, [userId, permissionCode], (err, row) => {
-      db.close();
-      if (err) {
-        reject(err);
-      } else {
-        resolve(!!row);
-      }
-    });
-  });
+  const result = await pool.query(
+    `SELECT p.permission_id, p.permission_code, p.resource, p.action
+     FROM permissions p
+     JOIN role_permissions rp ON p.permission_id = rp.permission_id
+     JOIN roles r ON rp.role_id = r.role_id
+     JOIN users u ON u.role = r.role_code
+     WHERE u.id = $1 AND p.permission_code = $2`,
+    [userId, permissionCode]
+  );
+
+  return result.rows.length > 0;
 }
 
 /**
  * ตรวจสอบหลาย permissions พร้อมกัน
  */
 async function checkPermissions(userId, permissionCodes) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(DB_PATH);
-    const placeholders = permissionCodes.map(() => '?').join(',');
-    
-    db.all(`
-      SELECT p.permission_code
-      FROM permissions p
-      JOIN role_permissions rp ON p.permission_id = rp.permission_id
-      JOIN roles r ON rp.role_id = r.role_id
-      JOIN users u ON u.role = r.role_code
-      WHERE u.id = ? AND p.permission_code IN (${placeholders})
-    `, [userId, ...permissionCodes], (err, rows) => {
-      db.close();
-      if (err) {
-        reject(err);
-      } else {
-        const hasAll = permissionCodes.every(code => 
-          rows.some(row => row.permission_code === code)
-        );
-        resolve(hasAll);
-      }
-    });
-  });
+  if (!permissionCodes || permissionCodes.length === 0) return true;
+
+  const placeholders = permissionCodes.map((_, idx) => `$${idx + 2}`).join(',');
+
+  const result = await pool.query(
+    `SELECT p.permission_code
+     FROM permissions p
+     JOIN role_permissions rp ON p.permission_id = rp.permission_id
+     JOIN roles r ON rp.role_id = r.role_id
+     JOIN users u ON u.role = r.role_code
+     WHERE u.id = $1 AND p.permission_code IN (${placeholders})`,
+    [userId, ...permissionCodes]
+  );
+
+  const rows = result.rows || [];
+  const hasAll = permissionCodes.every(code => 
+    rows.some(row => row.permission_code === code)
+  );
+
+  return hasAll;
 }
 
 /**
  * ดึงข้อมูล role และ permissions ของผู้ใช้
  */
 async function getUserPermissions(userId) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(DB_PATH);
-    
-    db.all(`
-      SELECT 
+  const result = await pool.query(
+    `SELECT 
         u.id as user_id,
         u.username,
         u.role,
@@ -79,34 +70,29 @@ async function getUserPermissions(userId) {
         p.permission_code,
         p.resource,
         p.action
-      FROM users u
-      JOIN roles r ON u.role = r.role_code
-      JOIN role_permissions rp ON r.role_id = rp.role_id
-      JOIN permissions p ON rp.permission_id = p.permission_id
-      WHERE u.id = ?
-    `, [userId], (err, rows) => {
-      db.close();
-      if (err) {
-        reject(err);
-      } else if (rows.length === 0) {
-        resolve(null);
-      } else {
-        const user = {
-          user_id: rows[0].user_id,
-          username: rows[0].username,
-          role: rows[0].role,
-          role_name: rows[0].role_name,
-          level: rows[0].level,
-          permissions: rows.map(row => ({
-            code: row.permission_code,
-            resource: row.resource,
-            action: row.action
-          }))
-        };
-        resolve(user);
-      }
-    });
-  });
+     FROM users u
+     JOIN roles r ON u.role = r.role_code
+     JOIN role_permissions rp ON r.role_id = rp.role_id
+     JOIN permissions p ON rp.permission_id = p.permission_id
+     WHERE u.id = $1`,
+    [userId]
+  );
+
+  const rows = result.rows || [];
+  if (rows.length === 0) return null;
+
+  return {
+    user_id: rows[0].user_id,
+    username: rows[0].username,
+    role: rows[0].role,
+    role_name: rows[0].role_name,
+    level: rows[0].level,
+    permissions: rows.map(row => ({
+      code: row.permission_code,
+      resource: row.resource,
+      action: row.action
+    }))
+  };
 }
 
 /**
@@ -236,50 +222,38 @@ function requireOwnership(resourceType, idParam = 'id') {
  * ตรวจสอบ ownership ของ resource
  */
 async function checkResourceOwnership(resourceType, resourceId, userId) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(DB_PATH);
+  let query = '';
+  let params = [];
+
+  switch(resourceType) {
+    case 'farm':
+      query = 'SELECT 1 FROM farms WHERE farm_id = $1 AND owner_id = $2';
+      params = [resourceId, userId];
+      break;
     
-    let query = '';
-    let params = [];
+    case 'livestock':
+      query = `
+        SELECT 1 FROM livestock l 
+        JOIN farms f ON l.farm_id = f.farm_id 
+        WHERE l.livestock_id = $1 AND f.owner_id = $2
+      `;
+      params = [resourceId, userId];
+      break;
+    
+    case 'survey':
+      query = `
+        SELECT 1 FROM farm_surveys 
+        WHERE survey_id = $1 AND (farmer_id = $2 OR surveyor_id = $2)
+      `;
+      params = [resourceId, userId];
+      break;
 
-    switch(resourceType) {
-      case 'farm':
-        query = 'SELECT 1 FROM farms WHERE farm_id = ? AND owner_id = ?';
-        params = [resourceId, userId];
-        break;
-      
-      case 'livestock':
-        query = `
-          SELECT 1 FROM livestock l 
-          JOIN farms f ON l.farm_id = f.farm_id 
-          WHERE l.livestock_id = ? AND f.owner_id = ?
-        `;
-        params = [resourceId, userId];
-        break;
-      
-      case 'survey':
-        query = `
-          SELECT 1 FROM farm_surveys 
-          WHERE survey_id = ? AND (farmer_id = ? OR surveyor_id = ?)
-        `;
-        params = [resourceId, userId, userId];
-        break;
+    default:
+      throw new Error('Unknown resource type: ' + resourceType);
+  }
 
-      default:
-        db.close();
-        reject(new Error('Unknown resource type: ' + resourceType));
-        return;
-    }
-
-    db.get(query, params, (err, row) => {
-      db.close();
-      if (err) {
-        reject(err);
-      } else {
-        resolve(!!row);
-      }
-    });
-  });
+  const result = await pool.query(query, params);
+  return result.rows.length > 0;
 }
 
 /**
@@ -330,15 +304,12 @@ function requireAreaAccess(areaType = 'tambon') {
  * บันทึก audit log
  */
 async function logAuditAction(data) {
-  return new Promise((resolve, reject) => {
-    const db = new sqlite3.Database(DB_PATH);
-    
-    db.run(`
-      INSERT INTO audit_logs (
+  await pool.query(
+    `INSERT INTO audit_logs (
         user_id, username, role, action, resource, resource_id,
         details, ip_address, user_agent, success
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
       data.user_id,
       data.username,
       data.role,
@@ -349,16 +320,8 @@ async function logAuditAction(data) {
       data.ip_address || null,
       data.user_agent || null,
       data.success !== undefined ? data.success : 1
-    ], (err) => {
-      db.close();
-      if (err) {
-        console.error('Audit log error:', err);
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
-  });
+    ]
+  );
 }
 
 module.exports = {
