@@ -474,6 +474,64 @@ async function initDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         read_at TIMESTAMP
       );
+
+      -- RBAC core tables
+      CREATE TABLE IF NOT EXISTS roles (
+        role_id SERIAL PRIMARY KEY,
+        role_code VARCHAR(50) UNIQUE NOT NULL,
+        role_name TEXT NOT NULL,
+        level INTEGER NOT NULL DEFAULT 1,
+        is_active BOOLEAN DEFAULT true
+      );
+
+      CREATE TABLE IF NOT EXISTS permissions (
+        permission_id SERIAL PRIMARY KEY,
+        permission_code VARCHAR(100) UNIQUE NOT NULL,
+        resource TEXT NOT NULL,
+        action TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS role_permissions (
+        id SERIAL PRIMARY KEY,
+        role_id INTEGER NOT NULL REFERENCES roles(role_id) ON DELETE CASCADE,
+        permission_id INTEGER NOT NULL REFERENCES permissions(permission_id) ON DELETE CASCADE,
+        has_permission BOOLEAN DEFAULT true,
+        UNIQUE(role_id, permission_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS user_permissions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        permission_code VARCHAR(100) NOT NULL,
+        granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, permission_code)
+      );
+    `);
+    
+    // Seed minimal RBAC data
+    await db.exec(`
+      INSERT INTO roles (role_code, role_name, level, is_active)
+      VALUES
+        ('FARMER', 'เกษตรกร', 1, true),
+        ('SUPER_ADMIN', 'ผู้ดูแลระบบ', 99, true)
+      ON CONFLICT (role_code) DO NOTHING;
+
+      INSERT INTO permissions (permission_code, resource, action)
+      VALUES
+        ('view_dashboard', 'dashboard', 'view'),
+        ('manage_users', 'users', 'manage'),
+        ('view_farms', 'farms', 'view'),
+        ('manage_farms', 'farms', 'manage')
+      ON CONFLICT (permission_code) DO NOTHING;
+
+      INSERT INTO role_permissions (role_id, permission_id, has_permission)
+      SELECT r.role_id, p.permission_id, true
+      FROM roles r
+      JOIN permissions p ON (
+        (r.role_code = 'SUPER_ADMIN') OR
+        (r.role_code = 'FARMER' AND p.permission_code IN ('view_dashboard', 'view_farms'))
+      )
+      ON CONFLICT (role_id, permission_id) DO NOTHING;
     `);
     
     console.log('🗄️ PostgreSQL database connected and initialized for production');
@@ -558,7 +616,8 @@ async function assignDefaultPermissions(userId, roleCode) {
            ON CONFLICT(user_id, permission_code) DO NOTHING`
         : `INSERT INTO user_permissions (user_id, permission_code, granted_at)
            VALUES (?, ?, NOW())
-           ON DUPLICATE KEY UPDATE granted_at = NOW()`;
+           ON CONFLICT (user_id, permission_code)
+           DO UPDATE SET granted_at = EXCLUDED.granted_at`;
       
       if (isDevelopment) {
         await db.run(insertQuery, [userId, perm.permission_code]);
@@ -1103,7 +1162,7 @@ app.post('/api/auth/google-login', async (req, res) => {
     if (isDevelopment) {
       user = await db.get(userQuery, [email]);
     } else {
-      const [rows] = await db.execute(userQuery, [email]);
+      const rows = await db.query(userQuery, [email]);
       user = rows[0];
     }
 
@@ -1115,7 +1174,9 @@ app.post('/api/auth/google-login', async (req, res) => {
       
       const insertQuery = isDevelopment
         ? `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-        : `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+        : `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, salt, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+           RETURNING *`;
       
       // Use dummy password hash and salt for OAuth users
       const dummySalt = crypto.randomBytes(16).toString('hex');
@@ -1125,8 +1186,7 @@ app.post('/api/auth/google-login', async (req, res) => {
         const result = await db.run(insertQuery, [username, email, displayName, 'FARMER', photo_url, 'google', uid, dummyHash, dummySalt]);
         user = await db.get(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
       } else {
-        const [result] = await db.execute(insertQuery, [username, email, displayName, 'FARMER', photo_url, 'google', uid, dummyHash, dummySalt]);
-        const [rows] = await db.execute(`SELECT * FROM users WHERE id = ?`, [result.insertId]);
+        const rows = await db.query(insertQuery, [username, email, displayName, 'FARMER', photo_url, 'google', uid, dummyHash, dummySalt]);
         user = rows[0];
       }
       console.log('✅ New Google OAuth user created:', username);
@@ -1227,7 +1287,7 @@ app.post('/api/auth/facebook-login', async (req, res) => {
     if (isDevelopment) {
       user = await db.get(userQuery, [userEmail, user_id]);
     } else {
-      const [rows] = await db.execute(userQuery, [userEmail, user_id]);
+      const rows = await db.query(userQuery, [userEmail, user_id]);
       user = rows[0];
     }
 
@@ -1238,7 +1298,9 @@ app.post('/api/auth/facebook-login', async (req, res) => {
       const displayName = name || username;
       const insertQuery = isDevelopment
         ? `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-        : `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, salt, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
+        : `INSERT INTO users (username, email, display_name, role, photo_url, oauth_provider, oauth_uid, password_hash, salt, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+           RETURNING *`;
       
       // Use dummy password hash and salt for OAuth users
       const dummySalt = crypto.randomBytes(16).toString('hex');
@@ -1248,8 +1310,7 @@ app.post('/api/auth/facebook-login', async (req, res) => {
         const result = await db.run(insertQuery, [username, userEmail, displayName, 'user', photo_url, 'facebook', user_id, dummyHash, dummySalt]);
         user = await db.get(`SELECT * FROM users WHERE id = ?`, [result.lastID]);
       } else {
-        const [result] = await db.execute(insertQuery, [username, userEmail, displayName, 'user', photo_url, 'facebook', user_id, dummyHash, dummySalt]);
-        const [rows] = await db.execute(`SELECT * FROM users WHERE id = ?`, [result.insertId]);
+        const rows = await db.query(insertQuery, [username, userEmail, displayName, 'user', photo_url, 'facebook', user_id, dummyHash, dummySalt]);
         user = rows[0];
       }
       console.log('✅ New Facebook OAuth user created:', username);
