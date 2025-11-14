@@ -1,10 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const sqlite3 = require('sqlite3').verbose();
-const path = require('path');
+const { Pool } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
-const DB_PATH = path.join(__dirname, '..', 'farm_auth.db');
+// Shared PostgreSQL pool (DATABASE_URL must be set in environment)
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('localhost')
+    ? false
+    : { rejectUnauthorized: false }
+});
 
 // ================================
 // GET NOTIFICATIONS
@@ -22,35 +27,27 @@ router.get('/', async (req, res) => {
       return res.status(400).json({ error: 'user_id is required' });
     }
 
-    const db = new sqlite3.Database(DB_PATH);
-    
-    db.all(
+    const result = await pool.query(
       `SELECT * FROM notifications 
-       WHERE user_id = ? 
+       WHERE user_id = $1 
        ORDER BY created_at DESC`,
-      [userId],
-      (err, rows) => {
-        db.close();
-        
-        if (err) {
-          console.error('❌ Error fetching notifications:', err);
-          return res.status(500).json({ error: 'Failed to fetch notifications' });
-        }
-        
-        console.log(`✅ Found ${rows?.length || 0} notifications for user ${userId}`);
-        if (rows && rows.length > 0) {
-          console.log(`📋 Notifications:`, rows.map(r => ({
-            id: r.id,
-            type: r.type,
-            title: r.title,
-            is_read: r.is_read,
-            created_at: r.created_at
-          })));
-        }
-        
-        res.json(rows || []);
-      }
+      [userId]
     );
+
+    const rows = result.rows || [];
+
+    console.log(`✅ Found ${rows.length} notifications for user ${userId}`);
+    if (rows.length > 0) {
+      console.log(`📋 Notifications:`, rows.map(r => ({
+        id: r.id,
+        type: r.type,
+        title: r.title,
+        is_read: r.is_read,
+        created_at: r.created_at
+      })));
+    }
+    
+    res.json(rows);
   } catch (error) {
     console.error('❌ Error fetching notifications:', error);
     res.status(500).json({ error: 'Failed to fetch notifications' });
@@ -69,24 +66,15 @@ router.get('/unread-count', async (req, res) => {
       return res.status(400).json({ error: 'user_id is required' });
     }
 
-    const db = new sqlite3.Database(DB_PATH);
-    
-    db.get(
+    const result = await pool.query(
       `SELECT COUNT(*) as count FROM notifications 
-       WHERE user_id = ? AND is_read = 0`,
-      [userId],
-      (err, row) => {
-        db.close();
-        
-        if (err) {
-          console.error('❌ Error fetching unread count:', err);
-          return res.status(500).json({ error: 'Failed to fetch unread count' });
-        }
-        
-        console.log(`✅ Unread count for user ${userId}: ${row.count || 0}`);
-        res.json({ unreadCount: row.count || 0 });
-      }
+       WHERE user_id = $1 AND is_read = false`,
+      [userId]
     );
+
+    const count = Number(result.rows?.[0]?.count || 0);
+    console.log(`✅ Unread count for user ${userId}: ${count}`);
+    res.json({ unreadCount: count });
   } catch (error) {
     console.error('❌ Error fetching unread count:', error);
     res.status(500).json({ error: 'Failed to fetch unread count' });
@@ -135,39 +123,29 @@ router.post('/', async (req, res) => {
 
     const id = uuidv4();
     const created_at = new Date().toISOString();
-    const db = new sqlite3.Database(DB_PATH);
 
     console.log(`💾 Inserting notification with id: ${id}`);
 
-    db.run(
+    await pool.query(
       `INSERT INTO notifications (
         id, user_id, type, title, message, link,
         related_feedback_id, related_reply_id,
         related_user_id, related_user_name,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         id, user_id, type, title, message, link,
         related_feedback_id, related_reply_id,
         related_user_id, related_user_name,
         created_at
-      ],
-      (err) => {
-        db.close();
-        
-        if (err) {
-          console.error('❌ Error creating notification:', err);
-          console.error('❌ Error stack:', err.stack);
-          return res.status(500).json({ error: 'Failed to create notification' });
-        }
-        
-        console.log(`✅ Notification created successfully! ID: ${id}`);
-        res.status(201).json({ 
-          id,
-          message: 'Notification created successfully' 
-        });
-      }
+      ]
     );
+
+    console.log(`✅ Notification created successfully! ID: ${id}`);
+    res.status(201).json({ 
+      id,
+      message: 'Notification created successfully' 
+    });
   } catch (error) {
     console.error('❌ Error creating notification:', error);
     console.error('❌ Error stack:', error.stack);
@@ -187,25 +165,16 @@ router.patch('/:id/read', async (req, res) => {
     console.log(`📖 PATCH /api/notifications/${id}/read - Mark as read`);
     
     const read_at = new Date().toISOString();
-    const db = new sqlite3.Database(DB_PATH);
 
-    db.run(
+    const result = await pool.query(
       `UPDATE notifications 
-       SET is_read = 1, read_at = ? 
-       WHERE id = ?`,
-      [read_at, id],
-      function(err) {
-        db.close();
-        
-        if (err) {
-          console.error('❌ Error updating notification:', err);
-          return res.status(500).json({ error: 'Failed to update notification' });
-        }
-        
-        console.log(`✅ Notification ${id} marked as read (${this.changes} rows affected)`);
-        res.json({ message: 'Notification marked as read' });
-      }
+       SET is_read = true, read_at = $1 
+       WHERE id = $2`,
+      [read_at, id]
     );
+
+    console.log(`✅ Notification ${id} marked as read (${result.rowCount} rows affected)`);
+    res.json({ message: 'Notification marked as read' });
   } catch (error) {
     console.error('❌ Error updating notification:', error);
     res.status(500).json({ error: 'Failed to update notification' });
@@ -229,28 +198,19 @@ router.patch('/mark-all-read', async (req, res) => {
     }
 
     const read_at = new Date().toISOString();
-    const db = new sqlite3.Database(DB_PATH);
 
-    db.run(
+    const result = await pool.query(
       `UPDATE notifications 
-       SET is_read = 1, read_at = ? 
-       WHERE user_id = ? AND is_read = 0`,
-      [read_at, userId],
-      function(err) {
-        db.close();
-        
-        if (err) {
-          console.error('❌ Error updating notifications:', err);
-          return res.status(500).json({ error: 'Failed to update notifications' });
-        }
-        
-        console.log(`✅ All notifications marked as read for user ${userId} (${this.changes} rows affected)`);
-        res.json({ 
-          message: 'All notifications marked as read',
-          updated: this.changes
-        });
-      }
+       SET is_read = true, read_at = $1 
+       WHERE user_id = $2 AND is_read = false`,
+      [read_at, userId]
     );
+
+    console.log(`✅ All notifications marked as read for user ${userId} (${result.rowCount} rows affected)`);
+    res.json({ 
+      message: 'All notifications marked as read',
+      updated: result.rowCount
+    });
   } catch (error) {
     console.error('❌ Error updating notifications:', error);
     res.status(500).json({ error: 'Failed to update notifications' });
@@ -264,22 +224,14 @@ router.patch('/mark-all-read', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const db = new sqlite3.Database(DB_PATH);
 
-    db.run(
-      `DELETE FROM notifications WHERE id = ?`,
-      [id],
-      (err) => {
-        db.close();
-        
-        if (err) {
-          console.error('Error deleting notification:', err);
-          return res.status(500).json({ error: 'Failed to delete notification' });
-        }
-        
-        res.json({ message: 'Notification deleted successfully' });
-      }
+    const result = await pool.query(
+      `DELETE FROM notifications WHERE id = $1`,
+      [id]
     );
+
+    console.log(`🗑️ Notification ${id} deleted (${result.rowCount} rows)`);
+    res.json({ message: 'Notification deleted successfully' });
   } catch (error) {
     console.error('Error deleting notification:', error);
     res.status(500).json({ error: 'Failed to delete notification' });
@@ -307,29 +259,23 @@ async function createNotification({
 }) {
   const id = uuidv4();
   const created_at = new Date().toISOString();
-  const db = new sqlite3.Database(DB_PATH);
 
-  return new Promise((resolve, reject) => {
-    db.run(
-      `INSERT INTO notifications (
-        id, user_id, type, title, message, link,
-        related_feedback_id, related_reply_id,
-        related_user_id, related_user_name,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id, userId, type, title, message, link,
-        relatedFeedbackId, relatedReplyId,
-        relatedUserId, relatedUserName,
-        created_at
-      ],
-      (err) => {
-        db.close();
-        if (err) reject(err);
-        else resolve(id);
-      }
-    );
-  });
+  await pool.query(
+    `INSERT INTO notifications (
+      id, user_id, type, title, message, link,
+      related_feedback_id, related_reply_id,
+      related_user_id, related_user_name,
+      created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [
+      id, userId, type, title, message, link,
+      relatedFeedbackId, relatedReplyId,
+      relatedUserId, relatedUserName,
+      created_at
+    ]
+  );
+
+  return id;
 }
 
 // Export router and helper function

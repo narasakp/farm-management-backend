@@ -13,6 +13,9 @@ const crypto = require('crypto');
 require('dotenv').config();
 
 const app = express();
+// Trust first proxy (Railway / reverse proxy) so rate-limit can use X-Forwarded-For correctly
+app.set('trust proxy', 1);
+
 // Railway provides PORT via environment variable
 const PORT = process.env.PORT || 8080;
 
@@ -439,6 +442,22 @@ async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_production_livestock ON production_records(livestock_id);
       CREATE INDEX IF NOT EXISTS idx_production_date ON production_records(production_date);
       CREATE INDEX IF NOT EXISTS idx_production_type ON production_records(production_type);
+
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        link TEXT,
+        related_feedback_id TEXT,
+        related_reply_id TEXT,
+        related_user_id TEXT,
+        related_user_name TEXT,
+        is_read BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        read_at TIMESTAMP
+      );
     `);
     
     console.log('🗄️ PostgreSQL database connected and initialized for production');
