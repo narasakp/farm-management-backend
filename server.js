@@ -3035,9 +3035,15 @@ async function startServer() {
     }
     
     // Register admin routes after DB is initialized
-    const adminRoutes = require('./routes/admin');
-    app.use('/api/admin', adminRoutes(db));
-    console.log('✅ Admin routes registered');
+    if (isDevelopment) {
+      const adminRoutes = require('./routes/admin');
+      app.use('/api/admin', adminRoutes(db));
+      console.log('✅ Admin routes registered (SQLite)');
+    } else {
+      const adminRoutes = require('./routes/admin_postgresql');
+      app.use('/api/admin', adminRoutes(db)); // db is pool in production
+      console.log('✅ Admin routes registered (PostgreSQL)');
+    }
     console.log('✅ Profile routes registered (with avatar support)');
     
     const server = app.listen(PORT, '0.0.0.0', () => {
