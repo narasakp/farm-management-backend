@@ -27,6 +27,8 @@ module.exports = function(pool) {
  */
 router.get('/users', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
+    console.log('👥 GET /api/admin/users - Fetching all users...');
+    
     const query = `
       SELECT 
         u.id,
@@ -46,9 +48,12 @@ router.get('/users', authenticateToken, requireSuperAdmin, async (req, res) => {
     `;
 
     const result = await pool.query(query);
+    console.log(`✅ Found ${result.rows.length} users`);
+    console.log('📊 First user:', result.rows[0] ? result.rows[0].username : 'No users');
+    
     res.json({ users: result.rows });
   } catch (error) {
-    console.error('Error fetching users:', error);
+    console.error('❌ Error fetching users:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
