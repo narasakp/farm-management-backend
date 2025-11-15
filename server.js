@@ -1,4 +1,4 @@
-// Production Authentication Server with PostgreSQL Database
+﻿// Production Authentication Server with PostgreSQL Database
 // Persistent data storage for production use
 
 const express = require('express');
@@ -666,7 +666,7 @@ app.get('/', (req, res) => {
     status: 'running',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    database: isDevelopment ? 'SQLite' : 'MySQL',
+    database: isDevelopment ? 'SQLite' : 'PostgreSQL',
     uptime: {
       seconds: uptime,
       minutes: uptimeMinutes,
@@ -2666,7 +2666,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
-    database: isDevelopment ? 'SQLite' : 'MySQL'
+    database: isDevelopment ? 'SQLite' : 'PostgreSQL'
   });
 });
 
@@ -2946,7 +2946,7 @@ app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
       console.log('✅ SQLite UPDATE result:', result);
     } else {
       const [result] = await db.execute(updateQuery, [newHash, userId]);
-      console.log('✅ MySQL UPDATE result:', result);
+      console.log('✅ PostgreSQL UPDATE result:', result);
     }
     
     // Verify update
@@ -3043,7 +3043,7 @@ async function startServer() {
       console.log('🚀 Production Authentication Server เริ่มทำงานแล้ว');
       console.log(`📡 Server listening on 0.0.0.0:${actualPort}`);
       console.log(`🔧 PORT env: ${process.env.PORT || 'not set'}`);
-      console.log(`🗄️ Database: ${isDevelopment ? 'SQLite (Development)' : 'MySQL (Production)'}`);
+      console.log(`🗄️ Database: ${isDevelopment ? 'SQLite (Development)' : 'PostgreSQL (Production)'}`);
       console.log('🔒 พร้อมรับคำขอ Authentication');
       console.log('==================================================');
     });

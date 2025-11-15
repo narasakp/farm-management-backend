@@ -1,15 +1,19 @@
-/**
+﻿/**
  * User Profile & Reputation API Routes
  * สำหรับแสดงข้อมูลโปรไฟล์และคะแนนผู้ใช้
  */
 
 const express = require('express');
 const router = express.Router();
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
-const DB_PATH = path.join(__dirname, '..', 'farm_auth.db');
+// PostgreSQL Pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('localhost') ? false : { rejectUnauthorized: false }
+});
 
 // Reputation levels and thresholds
 const REPUTATION_LEVELS = {
@@ -42,76 +46,60 @@ function getReputationLevel(points) {
 }
 
 // Helper: Update user stats
-function updateUserStats(userId, activity, points = 0) {
-  const db = new sqlite3.Database(DB_PATH);
-  
-  // Get or create stats
-  db.get(
-    'SELECT * FROM user_forum_stats WHERE user_id = ?',
-    [userId],
-    (err, stats) => {
-      if (err) {
-        console.error('Error getting user stats:', err);
-        db.close();
-        return;
-      }
+async function updateUserStats(userId, activity, points = false) {
+  try {
+    // Get or create stats
+    const result = await pool.query(
+      'SELECT * FROM user_forum_stats WHERE user_id = $1',
+      [userId]
+    );
+    const stats = result.rows[0];
 
-      if (!stats) {
-        // Create new stats
-        db.run(
-          `INSERT INTO user_forum_stats (user_id, reputation_points, reputation_level) 
-           VALUES (?, ?, ?)`,
-          [userId, points, 'beginner'],
-          (insertErr) => {
-            if (insertErr) {
-              console.error('Error creating user stats:', insertErr);
-            }
-            db.close();
-          }
-        );
-      } else {
-        // Update stats
-        const newPoints = (stats.reputation_points || 0) + points;
-        const newLevel = getReputationLevel(newPoints).level;
-        
-        let updateQuery = 'UPDATE user_forum_stats SET reputation_points = ?, reputation_level = ?, updated_at = datetime(\'now\')';
-        const updateParams = [newPoints, newLevel];
-
-        // Update specific counters
-        if (activity === 'thread_created') {
-          updateQuery += ', threads_created = threads_created + 1';
-        } else if (activity === 'reply_posted') {
-          updateQuery += ', replies_posted = replies_posted + 1';
-        } else if (activity === 'answer_accepted') {
-          updateQuery += ', answers_accepted = answers_accepted + 1';
-        } else if (activity === 'best_answer') {
-          updateQuery += ', best_answers = best_answers + 1';
-        } else if (activity === 'upvote_received') {
-          updateQuery += ', upvotes_received = upvotes_received + 1, votes_received = votes_received + 1';
-        } else if (activity === 'downvote_received') {
-          updateQuery += ', downvotes_received = downvotes_received + 1, votes_received = votes_received + 1';
-        }
-
-        updateQuery += ' WHERE user_id = ?';
-        updateParams.push(userId);
-
-        db.run(updateQuery, updateParams, (updateErr) => {
-          if (updateErr) {
-            console.error('Error updating user stats:', updateErr);
-          }
-          db.close();
-        });
-      }
-
-      // Log activity
-      const logDb = new sqlite3.Database(DB_PATH);
-      logDb.run(
-        'INSERT INTO forum_activity_log (id, user_id, activity_type, points_earned) VALUES (?, ?, ?, ?)',
-        [uuidv4(), userId, activity, points]
+    if (!stats) {
+      // Create new stats
+      await pool.query(
+        `INSERT INTO user_forum_stats (user_id, reputation_points, reputation_level) 
+         VALUES ($1, $2, $3)`,
+        [userId, points, 'beginner']
       );
-      logDb.close();
+    } else {
+      // Update stats
+      const newPoints = (stats.reputation_points || 0) + points;
+      const newLevel = getReputationLevel(newPoints).level;
+      
+      let updateQuery = 'UPDATE user_forum_stats SET reputation_points = $1, reputation_level = $2, updated_at = CURRENT_TIMESTAMP';
+      const updateParams = [newPoints, newLevel];
+      let paramIndex = 3;
+
+      // Update specific counters
+      if (activity === 'thread_created') {
+        updateQuery += ', threads_created = threads_created + 1';
+      } else if (activity === 'reply_posted') {
+        updateQuery += ', replies_posted = replies_posted + 1';
+      } else if (activity === 'answer_accepted') {
+        updateQuery += ', answers_accepted = answers_accepted + 1';
+      } else if (activity === 'best_answer') {
+        updateQuery += ', best_answers = best_answers + 1';
+      } else if (activity === 'upvote_received') {
+        updateQuery += ', upvotes_received = upvotes_received + 1, votes_received = votes_received + 1';
+      } else if (activity === 'downvote_received') {
+        updateQuery += ', downvotes_received = downvotes_received + 1, votes_received = votes_received + 1';
+      }
+
+      updateQuery += ` WHERE user_id = $${paramIndex}`;
+      updateParams.push(userId);
+
+      await pool.query(updateQuery, updateParams);
     }
-  );
+
+    // Log activity
+    await pool.query(
+      'INSERT INTO forum_activity_log (id, user_id, activity_type, points_earned, created_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)',
+      [uuidv4(), userId, activity, points]
+    );
+  } catch (err) {
+    console.error('Error updating user stats:', err);
+  }
 }
 
 // Export helper for use in other routes
@@ -124,66 +112,60 @@ module.exports.updateUserStats = updateUserStats;
 router.get('/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
-    const db = new sqlite3.Database(DB_PATH);
 
     // Get user info
-    db.get(
-      'SELECT id, full_name, email, avatar_url, created_at FROM users WHERE id = ?',
-      [userId],
-      (err, user) => {
-        if (err || !user) {
-          db.close();
-          return res.status(404).json({ success: false, message: 'User not found' });
-        }
-
-        // Get forum stats
-        db.get(
-          'SELECT * FROM user_forum_stats WHERE user_id = ?',
-          [userId],
-          (statsErr, stats) => {
-            if (statsErr || !stats) {
-              // Return user with default stats
-              const defaultStats = {
-                reputation_points: 0,
-                reputation_level: 'beginner',
-                threads_created: 0,
-                replies_posted: 0,
-                answers_accepted: 0,
-                best_answers: 0,
-                votes_received: 0,
-                upvotes_received: 0,
-                downvotes_received: 0,
-              };
-
-              db.close();
-              return res.json({
-                success: true,
-                user: { ...user, ...defaultStats },
-                levelInfo: getReputationLevel(0),
-              });
-            }
-
-            // Get badges
-            db.all(
-              'SELECT * FROM user_badges WHERE user_id = ? ORDER BY earned_at DESC',
-              [userId],
-              (badgesErr, badges) => {
-                db.close();
-
-                const levelInfo = getReputationLevel(stats.reputation_points);
-
-                res.json({
-                  success: true,
-                  user: { ...user, ...stats },
-                  badges: badges || [],
-                  levelInfo,
-                });
-              }
-            );
-          }
-        );
-      }
+    const userResult = await pool.query(
+      'SELECT id, display_name, email, avatar_url, created_at FROM users WHERE id = $1',
+      [userId]
     );
+    const user = userResult.rows[0];
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Get forum stats
+    const statsResult = await pool.query(
+      'SELECT * FROM user_forum_stats WHERE user_id = $1',
+      [userId]
+    );
+    const stats = statsResult.rows[0];
+
+    if (!stats) {
+      // Return user with default stats
+      const defaultStats = {
+        reputation_points: 0,
+        reputation_level: 'beginner',
+        threads_created: 0,
+        replies_posted: 0,
+        answers_accepted: 0,
+        best_answers: 0,
+        votes_received: 0,
+        upvotes_received: 0,
+        downvotes_received: 0,
+      };
+
+      return res.json({
+        success: true,
+        user: { ...user, ...defaultStats },
+        levelInfo: getReputationLevel(0),
+      });
+    }
+
+    // Get badges
+    const badgesResult = await pool.query(
+      'SELECT * FROM user_badges WHERE user_id = $1 ORDER BY earned_at DESC',
+      [userId]
+    );
+
+    const levelInfo = getReputationLevel(stats.reputation_points);
+
+    res.json({
+      success: true,
+      user: { ...user, ...stats },
+      badges: badgesResult.rows || [],
+      levelInfo,
+    });
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาด' });
@@ -198,28 +180,19 @@ router.get('/:userId/activity', async (req, res) => {
   try {
     const { userId } = req.params;
     const { limit = 50 } = req.query;
-    
-    const db = new sqlite3.Database(DB_PATH);
 
-    db.all(
+    const result = await pool.query(
       `SELECT * FROM forum_activity_log 
-       WHERE user_id = ? 
+       WHERE user_id = $1 
        ORDER BY created_at DESC 
-       LIMIT ?`,
-      [userId, parseInt(limit)],
-      (err, activities) => {
-        db.close();
-
-        if (err) {
-          return res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาด' });
-        }
-
-        res.json({
-          success: true,
-          activities: activities || [],
-        });
-      }
+       LIMIT $2`,
+      [userId, parseInt(limit)]
     );
+
+    res.json({
+      success: true,
+      activities: result.rows || [],
+    });
   } catch (error) {
     console.error('Get activity error:', error);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาด' });
@@ -233,37 +206,29 @@ router.get('/:userId/activity', async (req, res) => {
 router.get('/leaderboard/top', async (req, res) => {
   try {
     const { limit = 10 } = req.query;
-    const db = new sqlite3.Database(DB_PATH);
 
-    db.all(
+    const result = await pool.query(
       `SELECT 
          s.*,
-         u.full_name,
+         u.display_name,
          u.avatar_url
        FROM user_forum_stats s
        JOIN users u ON s.user_id = u.id
        ORDER BY s.reputation_points DESC
-       LIMIT ?`,
-      [parseInt(limit)],
-      (err, users) => {
-        db.close();
-
-        if (err) {
-          return res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาด' });
-        }
-
-        const leaderboard = users.map((user, index) => ({
-          rank: index + 1,
-          ...user,
-          levelInfo: getReputationLevel(user.reputation_points),
-        }));
-
-        res.json({
-          success: true,
-          leaderboard,
-        });
-      }
+       LIMIT $1`,
+      [parseInt(limit)]
     );
+
+    const leaderboard = result.rows.map((user, index) => ({
+      rank: index + 1,
+      ...user,
+      levelInfo: getReputationLevel(user.reputation_points),
+    }));
+
+    res.json({
+      success: true,
+      leaderboard,
+    });
   } catch (error) {
     console.error('Get leaderboard error:', error);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาด' });
