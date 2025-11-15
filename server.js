@@ -88,13 +88,16 @@ let db;
 let otpStorage = new Map(); // Store OTP codes temporarily
 
 // Use NODE_ENV to control environment (Railway sets this automatically)
+// Force production if DATABASE_URL contains Railway PostgreSQL
 const NODE_ENV = process.env.NODE_ENV || 'development';
-const isDevelopment = NODE_ENV !== 'production';
+const hasRailwayPostgres = process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway');
+const isDevelopment = NODE_ENV !== 'production' && !hasRailwayPostgres;
 
 async function initDatabase() {
   console.log('🔍 Environment Check:');
   console.log('   NODE_ENV =', NODE_ENV);
   console.log('   DATABASE_URL =', process.env.DATABASE_URL ? 'SET' : 'NOT SET');
+  console.log('   hasRailwayPostgres =', hasRailwayPostgres);
   console.log('   isDevelopment =', isDevelopment);
   
   if (isDevelopment) {
