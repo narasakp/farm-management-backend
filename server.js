@@ -87,14 +87,13 @@ app.use('/api/', limiter);
 let db;
 let otpStorage = new Map(); // Store OTP codes temporarily
 
-// Use APP_ENV to control environment explicitly (Railway may set NODE_ENV)
-const APP_ENV = process.env.APP_ENV || process.env.NODE_ENV || 'development';
-const isDevelopment = APP_ENV !== 'production';
+// Use NODE_ENV to control environment (Railway sets this automatically)
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const isDevelopment = NODE_ENV !== 'production';
 
 async function initDatabase() {
   console.log('🔍 Environment Check:');
-  console.log('   APP_ENV =', APP_ENV);
-  console.log('   NODE_ENV =', process.env.NODE_ENV);
+  console.log('   NODE_ENV =', NODE_ENV);
   console.log('   DATABASE_URL =', process.env.DATABASE_URL ? 'SET' : 'NOT SET');
   console.log('   isDevelopment =', isDevelopment);
   
