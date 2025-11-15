@@ -37,9 +37,6 @@ router.get('/users', authenticateToken, requireSuperAdmin, async (req, res) => {
         u.phone,
         u.is_active,
         u.is_verified,
-        u.province_code,
-        u.amphoe_code,
-        u.tambon_code,
         u.created_at,
         u.last_login_at,
         r.role_name
