@@ -323,7 +323,6 @@ router.get('/roles', authenticateToken, requireSuperAdmin, async (req, res) => {
         r.role_id,
         r.role_code,
         r.role_name,
-        r.description,
         r.level,
         r.is_active,
         COUNT(DISTINCT rp.permission_id) as permission_count,
