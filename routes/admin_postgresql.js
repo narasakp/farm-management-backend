@@ -47,11 +47,11 @@ router.get('/users', authenticateToken, requireSuperAdmin, async (req, res) => {
       ORDER BY u.created_at DESC
     `;
 
-    const result = await pool.query(query);
-    console.log(`✅ Found ${result.rows.length} users`);
-    console.log('📊 First user:', result.rows[0] ? result.rows[0].username : 'No users');
+    const users = await pool.query(query);
+    console.log(`✅ Found ${users.length} users`);
+    console.log('📊 First user:', users[0] ? users[0].username : 'No users');
     
-    res.json({ users: result.rows });
+    res.json({ users });
   } catch (error) {
     console.error('❌ Error fetching users:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
@@ -78,11 +78,11 @@ router.get('/users/:id', authenticateToken, requireSuperAdmin, async (req, res) 
       [id]
     );
 
-    if (userResult.rows.length === 0) {
+    if (userResult.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = userResult.rows[0];
+    const user = userResult[0];
 
     // ดึง permissions ของ user
     const permResult = await pool.query(
@@ -96,7 +96,7 @@ router.get('/users/:id', authenticateToken, requireSuperAdmin, async (req, res) 
 
     res.json({
       user,
-      permissions: permResult.rows || [],
+      permissions: permResult || [],
     });
   } catch (error) {
     console.error('Error fetching user:', error);
@@ -122,7 +122,7 @@ router.put('/users/:id/role', authenticateToken, requireSuperAdmin, async (req, 
     // ตรวจสอบว่า role มีอยู่จริง
     const roleResult = await pool.query('SELECT role_code FROM roles WHERE role_code = $1', [role]);
     
-    if (roleResult.rows.length === 0) {
+    if (roleResult.length === 0) {
       console.log(`❌ [API] Invalid role: ${role}`);
       return res.status(400).json({ error: 'Invalid role' });
     }
@@ -130,12 +130,12 @@ router.put('/users/:id/role', authenticateToken, requireSuperAdmin, async (req, 
     // ดึงข้อมูล user ก่อน update
     const userResult = await pool.query('SELECT username, role as old_role FROM users WHERE id = $1', [id]);
     
-    if (userResult.rows.length === 0) {
+    if (userResult.length === 0) {
       console.log(`❌ [API] User not found: ${id}`);
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = userResult.rows[0];
+    const user = userResult[0];
 
     // Update role
     await pool.query(
@@ -196,12 +196,12 @@ router.put('/users/:id/status', authenticateToken, requireSuperAdmin, async (req
   try {
     const userResult = await pool.query('SELECT username FROM users WHERE id = $1', [id]);
     
-    if (userResult.rows.length === 0) {
+    if (userResult.length === 0) {
       console.log(`❌ [API] User not found: ${id}`);
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = userResult.rows[0];
+    const user = userResult[0];
 
     await pool.query(
       'UPDATE users SET is_active = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
@@ -251,12 +251,12 @@ router.delete('/users/:id', authenticateToken, requireSuperAdmin, async (req, re
   try {
     const userResult = await pool.query('SELECT username, display_name FROM users WHERE id = $1', [id]);
     
-    if (userResult.rows.length === 0) {
+    if (userResult.length === 0) {
       console.log(`❌ [API] User not found: ${id}`);
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const user = userResult.rows[0];
+    const user = userResult[0];
 
     // PostgreSQL: CASCADE delete will handle related records automatically if FK constraints are set
     // Otherwise, delete manually:
@@ -306,7 +306,7 @@ router.delete('/users/:id', authenticateToken, requireSuperAdmin, async (req, re
  */
 router.get('/roles', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
-    const result = await pool.query(
+    const roles = await pool.query(
       `SELECT 
         r.role_id,
         r.role_code,
@@ -322,9 +322,9 @@ router.get('/roles', authenticateToken, requireSuperAdmin, async (req, res) => {
       ORDER BY r.level, r.role_code`
     );
 
-    console.log('✅ Roles with user_count:', JSON.stringify(result.rows, null, 2));
+    console.log('✅ Roles with user_count:', JSON.stringify(roles, null, 2));
 
-    res.json({ roles: result.rows });
+    res.json({ roles });
   } catch (error) {
     console.error('Error fetching roles:', error);
     res.status(500).json({ error: 'Failed to fetch roles' });
@@ -339,7 +339,7 @@ router.get('/roles/:roleCode/permissions', authenticateToken, requireSuperAdmin,
   const { roleCode } = req.params;
 
   try {
-    const result = await pool.query(
+    const permissions = await pool.query(
       `SELECT p.permission_id, p.permission_code, p.resource, p.action, p.description
        FROM permissions p
        JOIN role_permissions rp ON p.permission_id = rp.permission_id
@@ -349,7 +349,7 @@ router.get('/roles/:roleCode/permissions', authenticateToken, requireSuperAdmin,
       [roleCode]
     );
 
-    res.json({ role_code: roleCode, permissions: result.rows });
+    res.json({ role_code: roleCode, permissions });
   } catch (error) {
     console.error('Error fetching permissions:', error);
     res.status(500).json({ error: 'Failed to fetch permissions' });
@@ -362,8 +362,7 @@ router.get('/roles/:roleCode/permissions', authenticateToken, requireSuperAdmin,
  */
 router.get('/permissions', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM permissions ORDER BY resource, action');
-    const permissions = result.rows;
+    const permissions = await pool.query('SELECT * FROM permissions ORDER BY resource, action');
 
     // Group by resource
     const grouped = {};
@@ -392,21 +391,18 @@ router.get('/permissions', authenticateToken, requireSuperAdmin, async (req, res
 router.get('/permission-matrix', authenticateToken, requireSuperAdmin, async (req, res) => {
   try {
     // Get all roles
-    const rolesResult = await pool.query('SELECT * FROM roles ORDER BY level, role_code');
-    const roles = rolesResult.rows;
+    const roles = await pool.query('SELECT * FROM roles ORDER BY level, role_code');
 
     // Get all permissions
-    const permsResult = await pool.query('SELECT * FROM permissions ORDER BY resource, action');
-    const permissions = permsResult.rows;
+    const permissions = await pool.query('SELECT * FROM permissions ORDER BY resource, action');
 
     // Get role-permission mappings
-    const mappingsResult = await pool.query(
+    const mappings = await pool.query(
       `SELECT r.role_code, p.permission_code
        FROM role_permissions rp
        JOIN roles r ON rp.role_id = r.role_id
        JOIN permissions p ON rp.permission_id = p.permission_id`
     );
-    const mappings = mappingsResult.rows;
 
     // Build matrix
     const matrix = {};
@@ -447,25 +443,25 @@ router.get('/stats', authenticateToken, requireSuperAdmin, async (req, res) => {
 
     // Total users
     const totalUsersResult = await pool.query('SELECT COUNT(*) as total FROM users');
-    stats.total_users = parseInt(totalUsersResult.rows[0].total) || 0;
+    stats.total_users = parseInt(totalUsersResult[0].total) || 0;
 
     // Active users
     const activeUsersResult = await pool.query('SELECT COUNT(*) as total FROM users WHERE is_active = true');
-    stats.active_users = parseInt(activeUsersResult.rows[0].total) || 0;
+    stats.active_users = parseInt(activeUsersResult[0].total) || 0;
 
     // Total roles
     const totalRolesResult = await pool.query('SELECT COUNT(*) as total FROM roles');
-    stats.total_roles = parseInt(totalRolesResult.rows[0].total) || 0;
+    stats.total_roles = parseInt(totalRolesResult[0].total) || 0;
 
     // Total permissions
     const totalPermsResult = await pool.query('SELECT COUNT(*) as total FROM permissions');
-    stats.total_permissions = parseInt(totalPermsResult.rows[0].total) || 0;
+    stats.total_permissions = parseInt(totalPermsResult[0].total) || 0;
 
     // Users by role
     const usersByRoleResult = await pool.query(
       'SELECT role, COUNT(*) as count FROM users GROUP BY role ORDER BY count DESC'
     );
-    stats.users_by_role = usersByRoleResult.rows || [];
+    stats.users_by_role = usersByRoleResult || [];
 
     res.json(stats);
   } catch (error) {
