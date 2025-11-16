@@ -145,21 +145,25 @@ router.put('/users/:id/role', authenticateToken, requireSuperAdmin, async (req, 
 
     console.log(`✅ [API] Role updated: ${user.username} from ${user.old_role} to ${role}`);
 
-    // Log audit
-    await logAuditAction({
-      user_id: req.user.id,
-      username: req.user.username,
-      role: req.user.role,
-      action: 'CHANGE_USER_ROLE',
-      resource: 'users',
-      resource_id: id,
-      details: JSON.stringify({
-        target_user: user.username,
-        old_role: user.old_role,
-        new_role: role,
-      }),
-      success: true,
-    });
+    // Log audit (optional - don't fail if audit table doesn't exist)
+    try {
+      await logAuditAction({
+        user_id: req.user.id,
+        username: req.user.username,
+        role: req.user.role,
+        action: 'CHANGE_USER_ROLE',
+        resource: 'users',
+        resource_id: id,
+        details: JSON.stringify({
+          target_user: user.username,
+          old_role: user.old_role,
+          new_role: role,
+        }),
+        success: true,
+      });
+    } catch (auditError) {
+      console.warn('⚠️ [API] Audit log failed (table may not exist):', auditError.message);
+    }
 
     res.json({
       message: 'Role updated successfully',
@@ -210,17 +214,21 @@ router.put('/users/:id/status', authenticateToken, requireSuperAdmin, async (req
 
     console.log(`✅ [API] Status updated: ${user.username} is_active=${is_active}`);
 
-    // Log audit
-    await logAuditAction({
-      user_id: req.user.id,
-      username: req.user.username,
-      role: req.user.role,
-      action: is_active ? 'ACTIVATE_USER' : 'DEACTIVATE_USER',
-      resource: 'users',
-      resource_id: id,
-      details: JSON.stringify({ target_user: user.username }),
-      success: true,
-    });
+    // Log audit (optional - don't fail if audit table doesn't exist)
+    try {
+      await logAuditAction({
+        user_id: req.user.id,
+        username: req.user.username,
+        role: req.user.role,
+        action: is_active ? 'ACTIVATE_USER' : 'DEACTIVATE_USER',
+        resource: 'users',
+        resource_id: id,
+        details: JSON.stringify({ target_user: user.username }),
+        success: true,
+      });
+    } catch (auditError) {
+      console.warn('⚠️ [API] Audit log failed (table may not exist):', auditError.message);
+    }
 
     res.json({
       message: `User ${is_active ? 'activated' : 'deactivated'} successfully`,
@@ -272,20 +280,24 @@ router.delete('/users/:id', authenticateToken, requireSuperAdmin, async (req, re
 
     console.log(`✅ [API] User deleted: ${user.username}`);
 
-    // Log audit
-    await logAuditAction({
-      user_id: req.user.id,
-      username: req.user.username,
-      role: req.user.role,
-      action: 'DELETE_USER',
-      resource: 'users',
-      resource_id: id,
-      details: JSON.stringify({
-        deleted_user: user.username,
-        display_name: user.display_name,
-      }),
-      success: true,
-    });
+    // Log audit (optional - don't fail if audit table doesn't exist)
+    try {
+      await logAuditAction({
+        user_id: req.user.id,
+        username: req.user.username,
+        role: req.user.role,
+        action: 'DELETE_USER',
+        resource: 'users',
+        resource_id: id,
+        details: JSON.stringify({
+          deleted_user: user.username,
+          display_name: user.display_name,
+        }),
+        success: true,
+      });
+    } catch (auditError) {
+      console.warn('⚠️ [API] Audit log failed (table may not exist):', auditError.message);
+    }
 
     res.json({
       message: 'User deleted successfully',
