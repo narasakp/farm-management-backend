@@ -697,6 +697,14 @@ const path = require('path');
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 console.log('✅ Static uploads folder served at /uploads');
 
+// Farm Surveys routes (with db passed to router)
+const farmSurveysRoutes = require('./routes/farm-surveys');
+app.use('/api/farm-surveys', (req, res, next) => {
+  req.app.locals.db = db;
+  next();
+}, farmSurveysRoutes);
+console.log('✅ Farm Surveys routes registered at /api/farm-surveys');
+
 // Register RBAC routes (non-admin routes)
 app.use('/api/rbac', rbacRoutes);
 app.use('/api/farms', farmsRoutes);
