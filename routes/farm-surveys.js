@@ -154,7 +154,15 @@ router.get('/', async (req, res) => {
             postalCode: survey.address_postal_code
           }
         },
-        livestockData: livestock,
+        livestockData: livestock.map(l => ({
+          type: l.livestock_type,
+          breed: l.breed,
+          gender: l.gender,
+          ageGroup: l.age_group,
+          count: l.count,
+          dailyMilkProduction: l.daily_milk_production,
+          notes: l.notes
+        })),
         farmArea: survey.farm_area,
         cropArea: survey.crop_area,
         notes: survey.notes,
@@ -356,24 +364,38 @@ router.get('/statistics/livestock', async (req, res) => {
   try {
     const db = req.app.locals.db;
 
-    const stats = await db.query(`
+    // Get total farms (all surveys, not just those with livestock)
+    const totalFarmsResult = await db.query(`
+      SELECT COUNT(*) as total FROM farm_surveys
+    `);
+    
+    // Handle both PostgreSQL (returns {rows: []}) and SQLite (returns [])
+    const totalFarmsRows = totalFarmsResult.rows || totalFarmsResult;
+    const totalFarms = Number(totalFarmsRows[0]?.total || 0);
+    
+    console.log('📊 Statistics API - totalFarms:', totalFarms);
+    
+    // Get livestock statistics
+    const statsResult = await db.query(`
       SELECT 
-        COUNT(DISTINCT fs.id) as totalFarms,
-        SUM(sl.count) as totalLivestock,
         sl.livestock_type as type,
         SUM(sl.count) as count
-      FROM farm_surveys fs
-      JOIN survey_livestock sl ON fs.id = sl.survey_id
+      FROM survey_livestock sl
       GROUP BY sl.livestock_type
     `);
 
-    const totalFarms = stats.length > 0 ? stats[0].totalfarms : 0;
+    // Handle both PostgreSQL and SQLite
+    const stats = statsResult.rows || statsResult;
+    
     const totalLivestock = stats.reduce((sum, s) => sum + Number(s.count), 0);
     const livestockByType = {};
 
     stats.forEach(s => {
       livestockByType[s.type] = Number(s.count);
     });
+
+    console.log('📊 Statistics API - totalLivestock:', totalLivestock);
+    console.log('📊 Statistics API - livestockByType:', livestockByType);
 
     res.json({
       success: true,
