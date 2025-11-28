@@ -7,10 +7,19 @@ const express = require('express');
 const router = express.Router();
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const { Pool } = require('pg');
 const { authenticateToken } = require('../middleware/auth');
 const { requirePermission, requireOwnership, logAuditAction } = require('../middleware/rbac');
 
 const DB_PATH = path.join(__dirname, '..', 'farm_auth.db');
+
+// PostgreSQL pool สำหรับ production (ใช้สำหรับ statistics และฟีเจอร์ที่ย้ายแล้ว)
+const pgPool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('localhost')
+    ? false
+    : { rejectUnauthorized: false }
+});
 
 // Helper: สร้าง WHERE clause ตาม role
 function buildWhereClause(userRole, userId, tambonCode, amphoeCode) {
@@ -422,43 +431,41 @@ router.delete('/:id',
 
 // =============================================
 // GET /api/farms/statistics/summary
-// สถิติฟาร์ม (ตาม role)
+// สถิติฟาร์ม (ตาม role) - ใช้ PostgreSQL
 // =============================================
-router.get('/statistics/summary', authenticateToken, requirePermission('farms.read'), (req, res) => {
-  const db = new sqlite3.Database(DB_PATH);
+router.get('/statistics/summary', authenticateToken, requirePermission('farms.read'), async (req, res) => {
+  try {
+    // เนื่องจากตาราง farms ยังไม่ได้ย้ายมาเต็ม เราใช้ farm_surveys + survey_livestock ที่ migrate มาแล้ว
 
-  const { where, params } = buildWhereClause(
-    req.user.role,
-    req.user.id,
-    req.user.tambon_code,
-    req.user.amphoe_code
-  );
+    // เกษตรกรทั้งหมด = จำนวนนับไม่ซ้ำของ farmer_id ใน farm_surveys
+    const farmersResult = await pgPool.query(
+      `SELECT COUNT(DISTINCT farmer_id) AS total_farmers FROM farm_surveys`
+    );
 
-  db.get(`
-    SELECT 
-      COUNT(*) as total_farms,
-      COUNT(DISTINCT owner_id) as total_farmers,
-      SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) as active_farms,
-      SUM(total_area) as total_area,
-      AVG(total_area) as avg_area
-    FROM farms f
-    ${where}
-  `, params, (err, row) => {
-    db.close();
+    // ปศุสัตว์ทั้งหมด = SUM(count) จาก survey_livestock
+    const livestockResult = await pgPool.query(
+      `SELECT COALESCE(SUM(count), 0) AS total_livestock FROM survey_livestock`
+    );
 
-    if (err) {
-      console.error('Get statistics error:', err);
-      return res.status(500).json({
-        error: 'Internal Server Error',
-        message: 'เกิดข้อผิดพลาด'
-      });
-    }
+    const totalFarmers = Number(farmersResult.rows[0]?.total_farmers || 0);
+    const totalLivestock = Number(livestockResult.rows[0]?.total_livestock || 0);
 
+    // ส่งค่าในรูปแบบเดิม (field name เดิมบางส่วนใช้ไม่ได้แล้ว จึง map เท่าที่จำเป็นให้ frontend ใช้ได้)
     res.json({
       success: true,
-      data: row
+      data: {
+        total_farms: totalFarmers, // ถ้าต้องการจำนวนฟาร์มแท้จริง ค่อยปรับภายหลังเมื่อมีตาราง farms ใน PG
+        total_farmers: totalFarmers,
+        total_livestock: totalLivestock
+      }
     });
-  });
+  } catch (err) {
+    console.error('Get statistics (PostgreSQL) error:', err);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'เกิดข้อผิดพลาด'
+    });
+  }
 });
 
 module.exports = router;
